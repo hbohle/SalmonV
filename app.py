@@ -25,7 +25,7 @@ CLASS_COLORS = {
 def index():
     annotated = None       # Base64 de la imagen anotada
     areas     = {}         # dict: clase → área en px
-    threshold = 0.23       # umbral por defecto (0–1)
+    threshold = 0.05       # umbral por defecto (0–1)
 
     if request.method == "POST":
         # Leemos el umbral enviado por el slider (escala 0–1)
