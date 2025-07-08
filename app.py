@@ -3,37 +3,42 @@ import io
 import base64
 import requests
 from flask import Flask, render_template, request, flash
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-me")
 
-# --- CONFIGURACIÓN ROBOFLOW ---
+# --- CONFIGURACIÓN DE ROBOFLOW ---
 RF_MODEL   = "rayosx/1"
 RF_API_KEY = os.getenv("RF_API_KEY", "TqEZgC3d5X2gJwutY4MG")
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     annotated = None       # cadena base64 de la imagen anotada
-    areas     = {}         # dict: clase → área (px)
+    areas     = {}         # dict: clase → área en px
     threshold = 0.23       # umbral por defecto (0–1)
 
     if request.method == "POST":
-        # 1) Leemos el umbral enviado por el slider (escala 0–1)
+        # Leemos el umbral enviado por el slider (escala 0–1)
         threshold = float(request.form.get("threshold", threshold))
-        # 2) Recogemos la imagen subida
+
+        # Recogemos la imagen subida
         file = request.files.get("image")
         if not file:
             flash("Debes subir una imagen válida.", "danger")
-            return render_template("index.html", annotated=None, areas={}, threshold=threshold)
+            return render_template("index.html",
+                                   annotated=None,
+                                   areas={},
+                                   threshold=threshold)
 
         img_bytes = file.read()
         orig_img  = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
         # La API de Roboflow pide confidence en 0–100
         api_conf = int(threshold * 100)
 
-        # 3) Llamada HTTP a la API de segmentación
+        # Llamada a la API de segmentación
         resp = requests.post(
             f"https://detect.roboflow.com/{RF_MODEL}",
             params={
@@ -41,62 +46,62 @@ def index():
                 "format": "json",
                 "confidence": api_conf
             },
-            # Aquí pasamos name, contenido y tipo MIME
             files={"file": (file.filename, img_bytes, file.mimetype)}
         )
         resp.raise_for_status()
         preds = resp.json().get("predictions", [])
 
-        # 4) Preparamos un overlay RGBA transparente
+        # Preparamos un overlay RGBA transparente
         overlay = Image.new("RGBA", orig_img.size, (0,0,0,0))
 
-        # 5) Iteramos sobre cada predicción
+        # Iteramos sobre cada predicción
         for p in preds:
             cls  = p.get("class", "unknown")
             conf = p.get("confidence", 0.0)
-            # filtramos por umbral en 0–1
+
+            # Filtramos por umbral (0–1)
             if conf < threshold:
                 continue
 
-            # a) intentamos extraer la máscara embebida
+            # 1) Intentamos extraer la máscara embebida
             mask_data = p.get("mask", {}).get("mask")
             mask_img  = None
 
             if mask_data:
-                # Quítale el header `data:image/...;base64,`
+                # Quitamos header data:image/...;base64,
                 if mask_data.startswith("data:"):
-                    mask_data = mask_data.split(",",1)[1]
+                    mask_data = mask_data.split(",", 1)[1]
                 mask_img = Image.open(io.BytesIO(base64.b64decode(mask_data))).convert("L")
 
-            # b) si no hay máscara, la generamos a partir de los puntos
+            # 2) Si no hay máscara, la generamos a partir de los puntos
             elif "points" in p and p["points"]:
                 mask_img = Image.new("L", orig_img.size, 0)
-                draw = Image.Draw.Draw(mask_img)
-                poly = [(pt["x"], pt["y"]) for pt in p["points"]]
+                draw     = ImageDraw.Draw(mask_img)
+                poly     = [(pt["x"], pt["y"]) for pt in p["points"]]
                 draw.polygon(poly, fill=255)
 
-            # si no pudo generarla, saltamos
+            # Si no pudimos generar la máscara, saltamos
             if mask_img is None:
                 continue
 
-            # 6) calculamos el área
+            # Calculamos el área en píxeles
             mask_np = np.array(mask_img)
             area_px = int((mask_np > 0).sum())
             areas[cls] = areas.get(cls, 0) + area_px
 
-            # 7) construimos un overlay coloreado (rojo semitransparente)
-            alpha_mask = mask_img.point(lambda v: 120 if v>0 else 0)
-            color_img  = Image.new("RGBA", orig_img.size, (255,0,0,0))
+            # Construimos un overlay rojo semitransparente
+            alpha_mask = mask_img.point(lambda v: 120 if v > 0 else 0)
+            color_img  = Image.new("RGBA", orig_img.size, (255, 0, 0, 0))
             color_img.putalpha(alpha_mask)
             overlay = Image.alpha_composite(overlay, color_img)
 
-        # 8) superponemos overlay sobre la original
+        # Superponemos overlay sobre la imagen original
         annotated_img = Image.alpha_composite(orig_img.convert("RGBA"), overlay)
         buf = io.BytesIO()
         annotated_img.save(buf, format="PNG")
         annotated = base64.b64encode(buf.getvalue()).decode()
 
-    # Renderizamos en GET y POST (si no hubo POST, `annotated` será None y `areas` {})
+    # Renderizamos siempre (GET y POST)
     return render_template(
         "index.html",
         annotated=annotated,
