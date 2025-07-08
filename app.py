@@ -3,37 +3,31 @@ import io
 import base64
 import requests
 from flask import Flask, render_template, request
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-me")
 
-# Configuración del modelo en Roboflow
+# Tu modelo en Roboflow y API key
 RF_MODEL   = "rayosx/1"
 RF_API_KEY = os.getenv("RF_API_KEY", "TqEZgC3d5X2gJwutY4MG")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    # Inicializamos variables para la plantilla
-    annotated = None       # imagen anotada en base64
-    areas     = {}         # diccionario clase → área en px
-    threshold = 0.5        # umbral por defecto (0.0–1.0)
+    annotated = None       # Base64 de la imagen anotada
+    areas     = {}         # Diccionario clase → área en px
+    threshold = 0.5        # Umbral (0.0–1.0)
 
     if request.method == 'POST':
-        # Leemos el nuevo umbral del formulario
         threshold = float(request.form.get('threshold', 0.5))
-
-        # Procesamos la imagen subida
         file = request.files.get('image')
         if file:
             img_bytes = file.read()
             orig_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
-            # Convertimos el umbral (0–1) a la escala 0–100 de la API
             api_thresh = threshold * 100
 
-            # Llamada al endpoint de detección de Roboflow
+            # Llamada a la API de Roboflow
             resp = requests.post(
                 f"https://detect.roboflow.com/{RF_MODEL}",
                 params={
@@ -46,35 +40,53 @@ def index():
             resp.raise_for_status()
             preds = resp.json().get("predictions", [])
 
-            # Creamos un overlay transparente
-            overlay = Image.new("RGBA", orig_img.size, (0, 0, 0, 0))
+            # Prepara overlay transparente del mismo tamaño
+            overlay = Image.new("RGBA", orig_img.size, (0,0,0,0))
+            draw_overlay = ImageDraw.Draw(overlay)
 
-            # Para cada predicción, si supera el umbral, procesamos su máscara
             for p in preds:
                 cls  = p.get("class", "unknown")
                 conf = p.get("confidence", 0)
                 if conf < api_thresh:
                     continue
 
-                mask_b64 = p.get("mask", "")
-                # Si viene con header data:, lo quitamos
-                if mask_b64.startswith("data"):
-                    mask_b64 = mask_b64.split(",", 1)[1]
+                # 1) Si viene máscara en base64
+                mask_img = None
+                if "mask" in p and p["mask"]:
+                    mask_b64 = p["mask"]
+                    if mask_b64.startswith("data:"):
+                        mask_b64 = mask_b64.split(",",1)[1]
+                    mask_img = Image.open(io.BytesIO(base64.b64decode(mask_b64))).convert("L")
 
-                # Decodificamos la máscara y contamos sus píxeles
-                mask = Image.open(io.BytesIO(base64.b64decode(mask_b64))).convert("L")
-                mask_np = np.array(mask)
+                # 2) Si no, construye máscara a partir de los puntos del polígono
+                elif "points" in p and p["points"]:
+                    mask_img = Image.new("L", orig_img.size, 0)
+                    draw_mask = ImageDraw.Draw(mask_img)
+                    poly = [(point["x"], point["y"]) for point in p["points"]]
+                    draw_mask.polygon(poly, outline=1, fill=1)
+
+                if mask_img is None:
+                    continue
+
+                mask_np = np.array(mask_img)
                 area_px = int((mask_np > 0).sum())
                 areas[cls] = areas.get(cls, 0) + area_px
 
-                # Generamos un overlay coloreado para esta clase
-                alpha      = Image.fromarray((mask_np > 0).astype(np.uint8) * 128)
-                color      = (255, 0, 0)  # rojo por defecto
-                mask_color = Image.new("RGBA", orig_img.size, color + (0,))
-                mask_color.putalpha(alpha)
-                overlay = Image.alpha_composite(overlay, mask_color)
+                # Dibuja el polígono coloreado en el overlay
+                # Usamos el mismo poly si existe, o extraemos contorno de la máscara
+                if "points" in p and p["points"]:
+                    poly = [(point["x"], point["y"]) for point in p["points"]]
+                    color = (255,0,0,120)  # RGBA: rojo semi-transparente
+                    draw_overlay.polygon(poly, fill=color)
+                else:
+                    # si viene máscara, convertimos a polígono aproximado o pintamos píxel a píxel
+                    # pero para simplificar usamos mask_img como alpha
+                    rgba_mask = mask_img.point(lambda v: 120 if v>0 else 0)
+                    color_img = Image.new("RGBA", orig_img.size, (255,0,0,0))
+                    color_img.putalpha(rgba_mask)
+                    overlay = Image.alpha_composite(overlay, color_img)
 
-            # Superponemos el overlay sobre la imagen original
+            # Superponemos overlay sobre la original
             annotated_img = Image.alpha_composite(orig_img.convert("RGBA"), overlay)
 
             # Convertimos a base64 para incrustar en HTML
@@ -82,12 +94,12 @@ def index():
             annotated_img.save(buf, format="PNG")
             annotated = base64.b64encode(buf.getvalue()).decode()
 
-    # Renderizamos la plantilla siempre (GET y POST)
+    # Renderizamos siempre (GET y POST)
     return render_template(
         "index.html",
-        annotated=annotated,  # None o cadena base64
-        areas=areas,          # {} o dict con áreas
-        threshold=threshold   # valor actual del slider
+        annotated=annotated,
+        areas=areas,
+        threshold=threshold
     )
 
 if __name__ == "__main__":
