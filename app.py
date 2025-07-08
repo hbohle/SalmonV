@@ -60,7 +60,10 @@ def index():
             buf = io.BytesIO()
             annotated_img.save(buf, format="PNG")
             annotated = base64.b64encode(buf.getvalue()).decode()
-    return render_template("index.html", annotated=annotated, areas=areas or None, threshold=threshold)
+            return render_template("index.html",
+                       annotated=annotated,
+                       areas=areas,       
+                       threshold=threshold)
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

@@ -27,22 +27,28 @@
     <br><br>
     <button type="submit">Procesar</button>
   </form>
+
   {% if annotated %}
-    <div class="result">
-      <div>
-        <h2>Imagen Segmentada</h2>
-        <img src="data:image/png;base64,{{ annotated }}" alt="Segmentación">
-      </div>
-      <div>
-        <h2>Áreas (pixeles)</h2>
+  <div class="result">
+    <div>
+      <h2>Imagen Segmentada</h2>
+      <img src="data:image/png;base64,{{ annotated }}" alt="Segmentación">
+    </div>
+    <div>
+      <h2>Áreas (pixeles)</h2>
+      {% if areas %}
         <table>
           <tr><th>Clase</th><th>Área (px)</th></tr>
           {% for cls, area in areas.items() %}
             <tr><td>{{ cls }}</td><td>{{ area }}</td></tr>
           {% endfor %}
         </table>
-      </div>
+      {% else %}
+        <p>No se encontraron regiones por encima del umbral.</p>
+      {% endif %}
     </div>
-  {% endif %}
+  </div>
+{% endif %}
+
 </body>
 </html>
