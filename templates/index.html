@@ -7,7 +7,9 @@
     body { font-family: sans-serif; margin: 2rem; }
     h1 { margin-bottom: 1rem; }
     form { margin-bottom: 1.5rem; }
-    table { border-collapse: collapse; width: 60%; }
+    .result { display: flex; align-items: flex-start; gap: 2rem; }
+    img { max-width: 400px; border: 1px solid #ccc; }
+    table { border-collapse: collapse; width: auto; }
     th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: center; }
   </style>
 </head>
@@ -25,14 +27,22 @@
     <br><br>
     <button type="submit">Procesar</button>
   </form>
-  {% if areas %}
-    <h2>Resultados (pixeles)</h2>
-    <table>
-      <tr><th>Clase</th><th>Área (px)</th></tr>
-      {% for cls, area in areas.items() %}
-        <tr><td>{{ cls }}</td><td>{{ area }}</td></tr>
-      {% endfor %}
-    </table>
+  {% if annotated %}
+    <div class="result">
+      <div>
+        <h2>Imagen Segmentada</h2>
+        <img src="data:image/png;base64,{{ annotated }}" alt="Segmentación">
+      </div>
+      <div>
+        <h2>Áreas (pixeles)</h2>
+        <table>
+          <tr><th>Clase</th><th>Área (px)</th></tr>
+          {% for cls, area in areas.items() %}
+            <tr><td>{{ cls }}</td><td>{{ area }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
   {% endif %}
 </body>
 </html>

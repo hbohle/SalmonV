@@ -14,6 +14,7 @@ RF_API_KEY = os.getenv("RF_API_KEY", "TqEZgC3d5X2gJwutY4MG")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    annotated_b64 = None
     areas = None
     threshold = 0.5
     if request.method == 'POST':
@@ -21,6 +22,8 @@ def index():
         file = request.files.get('image')
         if file:
             img_bytes = file.read()
+            # Load original image
+            orig_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
             # Call Roboflow detect endpoint
             resp = requests.post(
                 f"https://detect.roboflow.com/{RF_MODEL}",
@@ -30,6 +33,8 @@ def index():
             resp.raise_for_status()
             preds = resp.json().get("predictions", [])
             areas = {}
+            # Create transparent overlay
+            overlay = Image.new("RGBA", orig_img.size, (0,0,0,0))
             for p in preds:
                 cls = p.get("class", "unknown")
                 conf = p.get("confidence", 0)
@@ -43,7 +48,19 @@ def index():
                 mask_np = np.array(mask)
                 count = int((mask_np > 0).sum())
                 areas[cls] = areas.get(cls, 0) + count
-    return render_template('index.html', areas=areas, threshold=threshold)
+                # Build overlay for this mask
+                alpha = Image.fromarray((mask_np > 0).astype(np.uint8) * 120, mode="L")
+                color = (255, 0, 0, 0) if cls != "Pez" else (0, 255, 0, 0)
+                mask_overlay = Image.new("RGBA", orig_img.size, color)
+                mask_overlay.putalpha(alpha)
+                overlay = Image.alpha_composite(overlay, mask_overlay)
+            # Composite overlay onto original
+            annotated = Image.alpha_composite(orig_img.convert("RGBA"), overlay)
+            # Encode to base64
+            buf = io.BytesIO()
+            annotated.save(buf, format="PNG")
+            annotated_b64 = base64.b64encode(buf.getvalue()).decode()
+    return render_template('index.html', annotated=annotated_b64, areas=areas, threshold=threshold)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
